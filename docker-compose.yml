@@ -117,5 +117,5 @@ x-wonton:
   requirements:
     # 上游镜像有 amd64 和 arm64（docker buildx imagetools inspect）。
     arch: [amd64, arm64]
-    # 上游没写最低内存；本机空闲实测约 xxxM（见 PR），待定。
+    # 上游没写最低内存；实测空闲约 335M（0.9.8，加载 Vosk 模型后），留出设备会话的余量取 512M。
     memory: 512M
