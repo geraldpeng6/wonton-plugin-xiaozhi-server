@@ -1,29 +1,13 @@
 图标
 ====
 
-`icon.svg` 为本仓库原创，按插件规范的线条风格手写，未用图片模型生成。从模板新建的插件换成自己的图标时，这里按实际情况重写。
+`icon.png` 取自上游 README 横幅（`docs/images/banner1.png`，仓库 https://github.com/xinnan-tech/xiaozhi-esp32-server ，MIT）里的小智机器人形象，按原图等比缩放，底色用横幅的品牌蓝（#308AFE）。未做其他修改。
+
+xiaozhi-esp32-server 名称与机器人形象是上游项目的标志；本插件与其无隶属或背书关系。
 
 许可证
 ------
 
-MIT License
+上游应用 xiaozhi-esp32-server 采用 MIT License（Copyright (c) 2025 xinnan-tech），全文见上游仓库的 LICENSE 文件：https://github.com/xinnan-tech/xiaozhi-esp32-server/blob/main/LICENSE
 
-Copyright (c) 2026 Wonton plugin authors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+插件包自身的许可证见仓库的 LICENSE（MIT）。语音识别模型 vosk-model-small-cn-0.22 来自 https://alphacephei.com/vosk/models ，按上游模型清单（https://github.com/alphacep/vosk-space/blob/master/models.md）为 Apache License 2.0；安装时下载、只在本机使用。
