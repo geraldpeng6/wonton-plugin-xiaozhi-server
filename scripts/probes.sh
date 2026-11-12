@@ -266,7 +266,11 @@ probes_web() { # 网页打得开：网关要拒绝匿名请求，页面特征要
     *"匿名 401"* | *"核心登录页"*) : ;;
     *) fail 网页打得开 "网关没拒绝匿名请求：$unauth_evi" ;;
   esac
-  body="$(dweb / -L 2>>"$PROBES_LOG")" || { say "dweb 失败一次，重试"; body="$(dweb / -L 2>>"$PROBES_LOG")" || body=""; }
+  # dweb 会把 / 拼在 dev.sh web 的 plugin_web_url 后面，webui.path 不为 / 时得到双斜杠 404；
+  # 先用 dev.sh session 建立用户会话，再用 web_get 拼在 SMOKE_WEB_URL（去尾斜杠的网页入口）后面，
+  # 和上面匿名检查同一个地址。
+  probes_dev session >>"$PROBES_LOG" 2>&1 || true
+  body="$(web_get "/" -L 2>>"$PROBES_LOG")" || { say "web_get 失败一次，重试"; body="$(web_get "/" -L 2>>"$PROBES_LOG")" || body=""; }
   if ! declare -F web_assert >/dev/null; then
     fail 网页打得开 "没写探测：在 scripts/smoke-probes.sh 里写 web_assert（标准输入读页面，命中真实页面时返回 0）；$unauth_evi"
   elif [[ -n "$body" ]] && web_assert <<<"$body" >>"$PROBES_LOG" 2>&1; then
