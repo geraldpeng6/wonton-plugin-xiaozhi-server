@@ -47,3 +47,23 @@ identity_check() { # 应用没有用户体系：设备服务无登录页，“�
 # 冒烟的 API 层数据钩子覆盖不到，在开发环境用 reinstall 后检查 .config.yaml 和模型目录验证。
 export DATA_NA=1
 export SMOKE_NOTE="设备后端无用户数据；配置和识别模型的保留在开发环境手工验证"
+
+before_install() { # 识别模型 44 MB 在慢网络（alphacephei 单 IP 限速，实测 75-200 KB/s）要 4-10 分钟，
+  # 核心安装期限默认 300 秒不够；开发栈的 compose 不透传 WONTON_INSTALL_TIMEOUT_SECS（见 PR 底座问题），
+  # 只好在生成的 compose.yaml 上给核心加这项并重建核心。
+  local compose="$SMOKE_DEV_STATE/compose.yaml"
+  [[ -f "$compose" ]] || { echo "读不到 $compose"; return 1; }
+  if ! grep -q WONTON_INSTALL_TIMEOUT_SECS "$compose"; then
+    python3 - "$compose" <<'PY' || return 1
+import sys
+path = sys.argv[1]
+text = open(path).read()
+anchor = "      WONTON_CORE_SOURCE:"
+if text.count(anchor) != 1 or "WONTON_INSTALL_TIMEOUT_SECS" in text:
+    sys.exit("compose.yaml 结构和预期不一样，不敢加安装期限")
+open(path, "w").write(text.replace(anchor, "      WONTON_INSTALL_TIMEOUT_SECS: 900\n" + anchor))
+PY
+  fi
+  (cd "$SMOKE_DIR" && WONTON_DEV_STATE="$SMOKE_DEV_STATE" WONTON_INSTANCE="$SMOKE_INSTANCE" scripts/dev.sh up) || return 1
+  echo "核心安装期限已放宽到 900 秒"
+}
