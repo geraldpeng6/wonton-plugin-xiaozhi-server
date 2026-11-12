@@ -1,78 +1,124 @@
-# 示例插件：nginx 显示一个网页，向登录的人问好。改成自己的应用见 https://github.com/wontonapp/wonton-docs/blob/main/develop.md#写插件。
+# 小智 AI 语音硬件的自建后端（上游 https://github.com/xinnan-tech/xiaozhi-esp32-server ，MIT）。
+# 最简化部署：只有 server，不带智控台（manager-api / manager-web）和 MySQL/Redis。
+# 服务开两个端口给局域网里的设备：8000 WebSocket（对话），8003 HTTP（OTA 接口、视觉分析）。
+# 配置由一次性服务写进 data/.config.yaml（上游的覆盖配置），只动本插件自己的键：
+# 设备要连的局域网地址、模型网关的对话模型、本地 Vosk 语音识别模型。上游默认的本地 FunASR
+# 要下载约 1 GB 模型，最简化部署不采用；语音识别改用约 43 MB 的 Vosk 小模型。
 services:
-  web:
-    # 镜像按摘要固定（多架构镜像写清单列表的摘要），标签只给人看。
-    image: nginx:1.31.8-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
+  seed:
+    # 与主服务同一个镜像：里面已带 SileroVAD 模型、Vosk 库和 ruamel.yaml，脚本用镜像里的 Python 跑。
+    image: ghcr.io/xinnan-tech/xiaozhi-esp32-server:server_0.9.8@sha256:cd41415f887410080dc2424b5faef651373c72fba37b3979d28e90ee548181af
+    entrypoint: ["python", "/opt/xiaozhi-esp32-server/seed-config.py"]
     environment:
-      # 网关代登录：SSI 回显的 Remote-User 只信核心带来的。官方镜像启动时对 templates 目录里的
-      # *.template 做 envsubst，把下面的地址换进 nginx 配置（见 web/default.conf.template）。
-      WONTON_CORE_ADDRESS: ${WONTON_CORE_ADDRESS}
-    # 包里的文件经 configs 交给容器（核心在启动前写进去），不能用卷挂载。
+      # 局域网开关没开或地址选不出来时是空串，脚本据此决定写不写设备地址。
+      WONTON_LAN_ADDRESSES: ${WONTON_LAN_ADDRESSES}
+      WONTON_MODEL_BASE_URL: ${WONTON_MODEL_BASE_URL}
+      WONTON_MODEL_API_KEY: ${WONTON_MODEL_API_KEY}
+      WONTON_MODEL_DEFAULT: ${WONTON_MODEL_DEFAULT}
+    volumes:
+      - ${WONTON_APP_DATA}/data:/opt/xiaozhi-esp32-server/data
     configs:
-      - source: site
-        target: /etc/nginx/templates/default.conf.template
-      - source: page
-        target: /usr/share/nginx/html/index.html
-      - source: tokens
-        target: /usr/share/nginx/html/tokens.css
+      - source: seed-config
+        target: /opt/xiaozhi-esp32-server/seed-config.py
+    # 需要网络下载识别模型（network.egress），不写 network_mode: none。
+    restart: "no"
+
+  xiaozhi:
+    image: ghcr.io/xinnan-tech/xiaozhi-esp32-server:server_0.9.8@sha256:cd41415f887410080dc2424b5faef651373c72fba37b3979d28e90ee548181af
+    environment:
+      # 引用它是为了跟着局域网地址重建：地址变了核心会重建用到这个变量的服务，
+      # 应用重启后从 data/.config.yaml 读到一次性服务新写的设备地址。
+      WONTON_LAN_ADDRESSES: ${WONTON_LAN_ADDRESSES}
+    volumes:
+      - ${WONTON_APP_DATA}/data:/opt/xiaozhi-esp32-server/data
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    configs:
+      - source: healthcheck
+        target: /opt/xiaozhi-esp32-server/healthcheck.py
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      # OTA 接口 200 且报“运行正常”，加一次真实的 WebSocket 握手；脚本见 init/healthcheck.py。
+      test: ["CMD", "python", "/opt/xiaozhi-esp32-server/healthcheck.py"]
       interval: 30s
-      timeout: 5s
-      start_period: 30s
-      start_interval: 1s
+      timeout: 20s
+      start_period: 120s
+      start_interval: 5s
 
 configs:
-  site:
-    file: web/default.conf.template
-  page:
-    file: web/index.html
-  tokens:
-    file: web/tokens.css
+  seed-config:
+    file: init/seed-config.py
+  healthcheck:
+    file: init/healthcheck.py
 
 x-wonton:
-  spec: "0.6"
-  # 换成你自己的：反向域名形式，装上以后不能改。
-  id: app.example.hello
-  version: 0.1.1
+  spec: "0.11"
+  id: com.github.xinnan-tech.xiaozhi-server
+  version: 0.1.0
   kind: app
-  title: { zh: 你好, en: Hello }
-  description: { zh: 向登录的人问好的示例网页, en: An example page that greets whoever is signed in }
-  icon: icon.svg
+  title: { zh: 小智语音服务（xiaozhi-esp32-server）, en: Xiaozhi Voice Server (xiaozhi-esp32-server) }
+  description:
+    zh: 给家里的小智音箱当“大脑”：把显示的地址填进设备，以后说话都是家里的服务器在回答，不用注册官方账号。适合自己攒的或买来的小智设备。
+    en: "A private brain for your Xiaozhi AI speaker: enter the shown address on the device and from then on it answers from your own server, no official account needed."
+  icon: icon.png
   notices: [NOTICE]
-  screenshots: [screenshots/home.png]
-  author: { name: Example }
-  homepage: https://nginx.org
-  # 应用（这里是 nginx）的许可证；插件包自己的许可证写在仓库的 LICENSE 里。
-  license: BSD-2-Clause
+  screenshots: [screenshots/ota-status.png]
+  author: { name: geraldpeng6, url: https://github.com/geraldpeng6 }
+  homepage: https://github.com/xinnan-tech/xiaozhi-esp32-server
+  license: MIT
   tags:
-    zh: [工具]
-    en: [Tools]
+    zh: [AI, 智能家居]
+    en: [AI, Home]
   about:
     zh: |
-      一个示例网页：登录以后，页面会向你问好。新建插件时可以照着改。
+      小智音箱和小智机器人连上这个服务后，你对着它说话，它在家里回答：聊天、问天气、放音乐（按上游自带的功能为准）。
+
+      对话的“大脑”走云吞的模型网关，没接上时它听得到但答不了，网关装好后自动恢复；回答用微软的免费语音念出来，需要联网；你说的声音在本机转成文字（识别模型约 43 MB，安装时一起下载），录音不出家门。
+
+      要做的一步：装好后打开插件的“局域网访问”，把详情里显示的地址填进设备（配网时点“高级选项”粘贴地址）。设备重启后就一直用它。
     en: |
-      An example page: once you are signed in, the page says hello. Copy it as a starting point for a new plugin.
-  release_notes: { zh: 名字和说明更新。, en: Product name and description update. }
+      Point your Xiaozhi speaker or robot at this server and just talk: chat, ask about the weather, play music (whatever the upstream project supports).
+
+      The chat model goes through Wonton's model gateway; without it the device hears you but cannot answer, and it recovers automatically once a gateway is installed. Replies are spoken with Microsoft's free voice, which needs internet access. What you say is turned into text on this machine (the recognition model, about 43 MB, downloads during installation); recordings never leave home.
+
+      One step after installing: turn on "LAN access" in the plugin settings, then enter the address shown in the plugin details on your device (device pairing page, "Advanced options"). The device keeps using it after a reboot.
+  release_notes:
+    zh: 第一个版本：最简化部署，只装 server；对话模型走模型网关，语音识别用本地 Vosk 小模型，语音合成用微软 Edge 的免费语音。
+    en: "First release: minimal deployment with the server only; chat via the model gateway, speech recognition with a small local Vosk model, speech synthesis with Microsoft Edge's free voice."
+  setup:
+    zh: 装好后到插件设置里打开“局域网访问”，再把详情里显示的地址填进小智设备：设备进入配网模式，点“高级选项”，粘贴地址，保存并重启设备。
+    en: "After installing, turn on \"LAN access\" in the plugin settings, then enter the address shown in the details on your Xiaozhi device: open its pairing mode, tap \"Advanced options\", paste the address, save and reboot the device."
   webui:
-    service: web
-    port: 80
-    # 示例页回显网关注入的用户名，见 https://github.com/wontonapp/wonton-docs/blob/main/plugin-spec.md#网关代登录sso-proxy。
-    sso: proxy
-    proxy:
-      headers:
-        Remote-User: "{user}"
-  # 能放进侧边栏“我的应用”的页面，见 https://github.com/wontonapp/wonton-docs/blob/main/plugin-spec.md#应用页面tabs。放不放由用户决定。
-  tabs:
-    - id: home
-      title: { zh: 主页, en: Home }
-      icon: tabs/home.svg
-      icon_selected: tabs/home-fill.svg
-      path: /
-      # 这个页面没做适配，用默认的 inset：从状态栏下沿开始，页面不用管安全区。
-      # 想让内容从状态栏后面滚过，写 layout: edge-to-edge，并用 --wonton-inset-* 留出系统安全区的位置。
-  permissions: []
-  # 上游 nginx 官方镜像，amd64 和 arm64 都有；上游没写最低内存，按本机空闲实测取整（实测约 24M，取 64M）。
+    service: xiaozhi
+    port: 8003
+    path: /xiaozhi/ota/
+    sso: none
+  lan:
+    ports:
+      - { service: xiaozhi, port: 8000 }
+      - { service: xiaozhi, port: 8003 }
+    client:
+      # 设备里只填地址：OTA 接口会把 WebSocket 地址下发给设备。上游默认不对设备做认证，
+      # 这里的用户名和密码设备用不上；规范要求成对填写，详情页一起显示出来。
+      address: "http://{host}:8003/xiaozhi/ota/"
+      username: "{user}"
+      password: "{secret:lan_client_password}"
+  secrets:
+    lan_client_password:
+      generate: { bytes: 24 }
+  permissions:
+    # 对话模型只走模型网关。
+    # Chat goes through the model gateway only.
+    - models
+    # 回答的语音合成用微软 Edge 的免费语音，识别模型从 alphacephei.com 下载，天气/新闻插件访问外部服务。
+    # Speech synthesis uses Microsoft Edge's free voice, the recognition model downloads from alphacephei.com,
+    # and the bundled weather/news plugins reach external services.
+    - network.egress
+    # 设备在局域网里直连：8000 WebSocket、8003 OTA/视觉。
+    # Devices connect over the LAN: 8000 WebSocket, 8003 OTA/vision.
+    - network.lan
   requirements:
+    # 上游镜像有 amd64 和 arm64（docker buildx imagetools inspect）。
     arch: [amd64, arm64]
-    memory: 64M
+    # 上游没写最低内存；实测空闲约 335M（0.9.8，加载 Vosk 模型后），留出设备会话的余量取 512M。
+    memory: 512M
