@@ -36,30 +36,37 @@ def fail(message):
 
 
 def download_model():
-    """下载并解压 Vosk 识别模型；已就绪时不动。失败如实报错，装不上好过装上听不见。"""
+    """下载并解压 Vosk 识别模型；已就绪时不动。失败如实报错，装不上好过装上听不见。
+    网络慢或对端断流时整段重试：套接字超时 60 秒，最多试 3 次，重试之间不睡眠（安装期限宝贵）。"""
     if MODEL_SENTINEL.is_file():
         print(f"识别模型已就绪：{MODEL_DIR}")
         return
     print(f"下载识别模型 {MODEL_URL}（约 44 MB）……")
     DATA.mkdir(parents=True, exist_ok=True)
-    try:
-        request = urllib.request.Request(MODEL_URL)
-        with urllib.request.urlopen(request, timeout=120) as response, io.BytesIO() as buf:
-            if response.status != 200:
-                fail(f"模型下载 HTTP {response.status}")
-            while True:
-                chunk = response.read(1 << 20)
-                if not chunk:
-                    break
-                buf.write(chunk)
-            buf.seek(0)
-            with zipfile.ZipFile(buf) as archive:
-                names = archive.namelist()
-                if not any(n.startswith("vosk-model-small-cn-0.22/") for n in names):
-                    fail(f"下载的内容不对：{names[:3]}")
-                archive.extractall(DATA / "models")
-    except Exception as error:
-        fail(f"下载或解压识别模型失败：{error}")
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            request = urllib.request.Request(MODEL_URL)
+            with urllib.request.urlopen(request, timeout=60) as response, io.BytesIO() as buf:
+                if response.status != 200:
+                    fail(f"模型下载 HTTP {response.status}")
+                while True:
+                    chunk = response.read(1 << 20)
+                    if not chunk:
+                        break
+                    buf.write(chunk)
+                buf.seek(0)
+                with zipfile.ZipFile(buf) as archive:
+                    names = archive.namelist()
+                    if not any(n.startswith("vosk-model-small-cn-0.22/") for n in names):
+                        fail(f"下载的内容不对：{names[:3]}")
+                    archive.extractall(DATA / "models")
+            break
+        except Exception as error:
+            last_error = error
+            print(f"第 {attempt} 次下载失败：{error}", flush=True)
+    else:
+        fail(f"下载或解压识别模型失败：{last_error}")
     if not MODEL_SENTINEL.is_file():
         fail(f"解压后没有识别模型：{MODEL_DIR}")
     print(f"识别模型已下载：{MODEL_DIR}")
