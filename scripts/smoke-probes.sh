@@ -22,7 +22,7 @@ _container() { # <服务名>：本实例里这个服务的容器（按核心打�
 web_assert() { # 套件的 dweb / 会把路径拼在 web_url 后面，webui.path 不为 / 时得到双斜杠 404，
   # 所以这里自己取页面：SMOKE_WEB_URL 已是去尾斜杠的完整入口。
   local page lan ws_url
-  page="$(web_get "" -L)" || page=""
+  page="$(web_get "/" -L)" || page=""
   grep -q 'OTA接口运行正常' <<<"$page" || { echo "OTA 状态页没有“运行正常”：$(head -c 200 <<<"$page")"; return 1; }
   lan="$(docker exec "$(_container xiaozhi)" printenv WONTON_LAN_ADDRESSES 2>/dev/null | cut -d, -f1)"
   ws_url="$(grep -o 'ws://[^ ，。]*' <<<"$page" | head -1)"
