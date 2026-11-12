@@ -36,35 +36,64 @@ def fail(message):
     sys.exit(1)
 
 
-def _fetch_range(url: str, start: int, end: int, out: io.BytesIO, errors: list, attempt_max: int = 3):
-    """取 [start, end] 字节段写进 out（原地 seek）。段请求拿不到 206 就报错，由调用方回退整段下载。"""
-    last_error: Exception | None = None
-    for _ in range(attempt_max):
-        try:
-            request = urllib.request.Request(url, headers={"Range": f"bytes={start}-{end}"})
-            with urllib.request.urlopen(request, timeout=60) as response:
-                if response.status != 206:
-                    raise OSError(f"Range 请求得到 HTTP {response.status}")
-                out.seek(start)
-                while True:
-                    chunk = response.read(1 << 20)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-            return
-        except Exception as error:  # noqa: BLE001 - 网络层异常都要重试
-            last_error = error
-    errors.append(last_error)
+def _open_no_redirect(url: str, headers: dict):
+    """urllib 默认跟着跳转会丢 Range 语义；自己逐跳跟，返回（响应，最终 URL）。"""
+    request = urllib.request.Request(url, headers=headers)
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        response = opener.open(request, timeout=60)
+    except urllib.error.HTTPError as error:
+        response = error
+    return response, response.geturl()
 
 
-def _content_length(url: str) -> int | None:
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ARG002 - 签名固定
+        return None
+
+
+def _content_length(url: str) -> tuple[str, int] | None:
+    """HEAD 跟到底，返回（最终地址，字节数）；探测不了就返回 None。"""
     try:
         request = urllib.request.Request(url, method="HEAD")
         with urllib.request.urlopen(request, timeout=60) as response:
             size = response.headers.get("Content-Length")
-            return int(size) if size else None
+            if size and int(size) > 0:
+                return response.geturl(), int(size)
     except Exception:  # noqa: BLE001 - 探测失败就走整段下载
-        return None
+        pass
+    return None
+
+
+def _fetch_range(url: str, start: int, end: int, out: io.BytesIO, errors: list, attempt_max: int = 3):
+    """取 [start, end] 字节段写进 out（原地 seek）。跟着跳转拿到最终地址后必须 206；
+    拿不到就报错，由调用方回退整段下载。"""
+    last_error: Exception | None = None
+    for _ in range(attempt_max):
+        try:
+            current = url
+            for _hop in range(5):
+                response, current = _open_no_redirect(current, {"Range": f"bytes={start}-{end}"})
+                with response:
+                    if response.status in (301, 302, 303, 307, 308):
+                        continue
+                    if response.status != 206:
+                        raise OSError(f"Range 请求得到 HTTP {response.status}")
+                    out.seek(start)
+                    written = 0
+                    while True:
+                        chunk = response.read(1 << 20)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        written += len(chunk)
+                    if written != end - start + 1:
+                        raise OSError(f"段长度不对：{written} != {end - start + 1}")
+                    break
+            return
+        except Exception as error:  # noqa: BLE001 - 网络层异常都要重试
+            last_error = error
+    errors.append(last_error)
 
 
 def download_model():
