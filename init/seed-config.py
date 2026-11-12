@@ -65,9 +65,9 @@ def _content_length(url: str) -> tuple[str, int] | None:
     return None
 
 
-def _fetch_range(url: str, start: int, end: int, out: io.BytesIO, errors: list, attempt_max: int = 3):
-    """取 [start, end] 字节段写进 out（原地 seek）。跟着跳转拿到最终地址后必须 206；
-    拿不到就报错，由调用方回退整段下载。"""
+def _fetch_range(url: str, start: int, end: int, chunks: dict, errors: list, attempt_max: int = 3):
+    """取 [start, end] 字节段存进 chunks[start]（每段自己的缓冲，不共享；BytesIO 的 seek+write
+    多线程共用会串位）。跟着跳转拿到最终地址后必须 206；拿不到就报错，由调用方回退整段下载。"""
     last_error: Exception | None = None
     for _ in range(attempt_max):
         try:
@@ -79,16 +79,16 @@ def _fetch_range(url: str, start: int, end: int, out: io.BytesIO, errors: list, 
                         continue
                     if response.status != 206:
                         raise OSError(f"Range 请求得到 HTTP {response.status}")
-                    out.seek(start)
-                    written = 0
+                    mine = io.BytesIO()
                     while True:
                         chunk = response.read(1 << 20)
                         if not chunk:
                             break
-                        out.write(chunk)
-                        written += len(chunk)
+                        mine.write(chunk)
+                    written = mine.tell()
                     if written != end - start + 1:
                         raise OSError(f"段长度不对：{written} != {end - start + 1}")
+                    chunks[start] = mine.getvalue()
                     break
             return
         except Exception as error:  # noqa: BLE001 - 网络层异常都要重试
@@ -105,15 +105,17 @@ def download_model():
         return
     print(f"下载识别模型 {MODEL_URL}（约 44 MB）……")
     DATA.mkdir(parents=True, exist_ok=True)
-    total = _content_length(MODEL_URL)
+    info = _content_length(MODEL_URL)
+    total = info[1] if info else None
     buf = io.BytesIO()
     if total:
         workers = 8
         step = -(-total // workers)
         ranges = [(offset, min(offset + step, total) - 1) for offset in range(0, total, step)]
         errors: list[Exception] = []
+        chunks: dict[int, bytes] = {}
         threads = [
-            threading.Thread(target=_fetch_range, args=(MODEL_URL, start, end, buf, errors))
+            threading.Thread(target=_fetch_range, args=(info[0], start, end, chunks, errors))
             for start, end in ranges
         ]
         for thread in threads:
@@ -122,7 +124,7 @@ def download_model():
             thread.join()
         if errors:
             fail(f"模型下载失败：{errors[0]}")
-        body = buf.getvalue()
+        body = b"".join(chunks[offset] for offset, _end in ranges)
         if len(body) != total:
             fail(f"模型下载不完整：{len(body)}/{total}")
         archive_bytes = io.BytesIO(body)
