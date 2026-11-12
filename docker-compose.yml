@@ -8,7 +8,7 @@ services:
   seed:
     # 与主服务同一个镜像：里面已带 SileroVAD 模型、Vosk 库和 ruamel.yaml，脚本用镜像里的 Python 跑。
     image: ghcr.io/xinnan-tech/xiaozhi-esp32-server:server_0.9.8@sha256:cd41415f887410080dc2424b5faef651373c72fba37b3979d28e90ee548181af
-    entrypoint: ["python", "/seed/seed-config.py"]
+    entrypoint: ["python", "/opt/xiaozhi-esp32-server/seed-config.py"]
     environment:
       # 局域网开关没开或地址选不出来时是空串，脚本据此决定写不写设备地址。
       WONTON_LAN_ADDRESSES: ${WONTON_LAN_ADDRESSES}
@@ -19,7 +19,7 @@ services:
       - ${WONTON_APP_DATA}/data:/opt/xiaozhi-esp32-server/data
     configs:
       - source: seed-config
-        target: /seed/seed-config.py
+        target: /opt/xiaozhi-esp32-server/seed-config.py
     # 需要网络下载识别模型（network.egress），不写 network_mode: none。
     restart: "no"
 
@@ -34,9 +34,12 @@ services:
     depends_on:
       seed:
         condition: service_completed_successfully
+    configs:
+      - source: healthcheck
+        target: /opt/xiaozhi-esp32-server/healthcheck.py
     healthcheck:
       # OTA 接口 200 且报“运行正常”，加一次真实的 WebSocket 握手；脚本见 init/healthcheck.py。
-      test: ["CMD", "python", "/seed/healthcheck.py"]
+      test: ["CMD", "python", "/opt/xiaozhi-esp32-server/healthcheck.py"]
       interval: 30s
       timeout: 20s
       start_period: 120s
